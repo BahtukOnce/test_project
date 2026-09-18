@@ -160,6 +160,14 @@ def main():
     if not model_path.exists():
         raise SystemExit(f"нет модели: {model_path}")
 
+    # H.264 не умеет нечётные стороны кадра — округляем вниз до чётных,
+    # иначе ffmpeg падает с "broken pipe" уже после всей отрисовки.
+    for name in ("width", "height"):
+        value = getattr(args, name)
+        if value % 2:
+            setattr(args, name, value - 1)
+            print(f"{name}: {value} -> {value - 1} (H.264 требует чётный размер)")
+
     lights = not args.no_lights
     env = RedLightGreenLightEnv(lights=lights, difficulty=args.difficulty,
                                 render_width=args.width, render_height=args.height,

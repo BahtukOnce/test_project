@@ -106,7 +106,7 @@ def main():
     axes = np.atleast_1d(axes)
     # Поля считаем в долях от высоты рисунка, чтобы заголовок, легенда
     # и подпись оси не наезжали друг на друга при 2 и при 3 панелях.
-    fig.subplots_adjust(left=0.095, right=0.795,
+    fig.subplots_adjust(left=0.135, right=0.795,
                         top=1 - 1.15 / fig_h, bottom=0.62 / fig_h,
                         hspace=0.46)
 
@@ -119,11 +119,13 @@ def main():
         y = s.get("rollout/ep_rew_mean")
         if y is None:
             continue
-        ax.plot(s["_x"] / to_m, y, color=c["line"], linewidth=2.0,
+        m = ~np.isnan(y)
+        ax.plot(s["_x"][m] / to_m, y[m], color=c["line"], linewidth=2.0,
                 solid_capstyle="round", zorder=3)
     last = stages[-1].get("rollout/ep_rew_mean")
     if last is not None and not np.all(np.isnan(last)):
-        xs, ys = stages[-1]["_x"][-1] / to_m, last[-1]
+        m = ~np.isnan(last)
+        xs, ys = stages[-1]["_x"][m][-1] / to_m, last[m][-1]
         ax.scatter([xs], [ys], s=36, color=c["line"], zorder=4,
                    edgecolors=c["surface"], linewidths=2)
         ax.annotate(f"{ys:,.0f}".replace(",", " "), (xs, ys),
@@ -134,16 +136,26 @@ def main():
     ax = axes[1]
     style_axis(ax, c, "исходы эпизодов")
     for s in stages:
-        x = s["_x"] / to_m
-        series = []
-        for key, _, _ in OUTCOMES:
-            v = s.get(f"outcome/{key}")
-            series.append(np.nan_to_num(v, nan=0.0) if v is not None else np.zeros_like(x))
-        total = np.sum(series, axis=0)
+        raw = [s.get(f"outcome/{key}") for key, _, _ in OUTCOMES]
+        if all(v is None for v in raw):
+            continue
+        stacked = np.vstack([v if v is not None else np.full_like(s["_x"], np.nan)
+                             for v in raw])
+        valid = ~np.all(np.isnan(stacked), axis=0)   # строки, где исходы записаны
+        if not valid.any():
+            continue
+        x = s["_x"][valid] / to_m
+        stacked = np.nan_to_num(stacked[:, valid], nan=0.0)
+        total = stacked.sum(axis=0)
         total[total == 0] = 1.0
-        series = [v / total * 100.0 for v in series]
-        ax.stackplot(x, *series, colors=[col for _, _, col in OUTCOMES],
-                     edgecolor=c["surface"], linewidth=2.0, zorder=2)
+        series = [row / total * 100.0 for row in stacked]
+        ax.stackplot(x, *series, colors=[col for _, _, col in OUTCOMES], zorder=2)
+        # Разделители рисуем отдельными линиями, а не обводкой каждого
+        # многоугольника: обводка даёт контур и по вертикальным краям.
+        bottom = np.zeros_like(x)
+        for v in series[:-1]:
+            bottom = bottom + v
+            ax.plot(x, bottom, color=c["surface"], linewidth=2.0, zorder=3)
         # прямые подписи у правого края — чтобы цвет не был единственным признаком
         if s is stages[-1]:
             bottom = 0.0
@@ -170,7 +182,8 @@ def main():
             y = s.get("curriculum/difficulty")
             if y is None or np.all(np.isnan(y)):
                 continue
-            ax.plot(s["_x"] / to_m, y, color=CURRICULUM_COLOR, linewidth=2.0,
+            m = ~np.isnan(y)
+            ax.plot(s["_x"][m] / to_m, y[m], color=CURRICULUM_COLOR, linewidth=2.0,
                     solid_capstyle="round", zorder=3)
         ax.set_ylim(-0.05, 1.05)
         ax.set_yticks([0, 1])
@@ -188,10 +201,10 @@ def main():
 
     axes[-1].set_xlabel("шагов симуляции, млн", color=c["ink2"], fontsize=10)
 
-    fig.text(0.095, 1 - 0.30 / fig_h, args.title, color=c["ink"],
+    fig.text(0.135, 1 - 0.30 / fig_h, args.title, color=c["ink"],
              fontsize=15, fontweight="bold", ha="left", va="top")
     total_steps = float(np.nanmax(stages[-1]["_x"]))
-    fig.text(0.095, 1 - 0.62 / fig_h,
+    fig.text(0.135, 1 - 0.62 / fig_h,
              f"всего {total_steps / to_m:.1f} млн шагов · PPO · MuJoCo",
              color=c["muted"], fontsize=10, ha="left", va="top")
 

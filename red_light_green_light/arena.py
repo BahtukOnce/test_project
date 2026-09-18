@@ -44,6 +44,13 @@ def build_xml(finish_x: float = FINISH_X,
   <compiler angle="degree" inertiafromgeom="true"/>
   <option integrator="RK4" timestep="0.01"/>
 
+  <!-- Размер буфера офлайн-рендера. По умолчанию MuJoCo даёт 640x480,
+       и запись видео в большем разрешении падает с ошибкой. -->
+  <visual>
+    <global offwidth="1920" offheight="1080"/>
+    <quality shadowsize="4096"/>
+  </visual>
+
   <default>
     <joint armature="1" damping="1" limited="true"/>
     <geom conaffinity="0" condim="3" density="5.0" friction="1 0.5 0.5"
@@ -67,10 +74,19 @@ def build_xml(finish_x: float = FINISH_X,
           size="{floor_half_len} {half_width + 1.0} 0.1" conaffinity="1" condim="3"
           friction="1 0.5 0.5" rgba="0.55 0.58 0.62 1"/>
 
+    <!-- Стены коридора разделены на две части. Высокая невидимая
+         (rgba с нулевой прозрачностью) удерживает агента, но не
+         загораживает камеру. Низкий бортик рядом — только для вида. -->
     <geom name="wall_left" type="box" pos="{mid_x} {half_width} 0.8"
-          size="{floor_half_len} 0.15 0.8" conaffinity="1" rgba="0.30 0.33 0.40 1"/>
+          size="{floor_half_len} 0.15 0.8" conaffinity="1" rgba="0 0 0 0"/>
     <geom name="wall_right" type="box" pos="{mid_x} {-half_width} 0.8"
-          size="{floor_half_len} 0.15 0.8" conaffinity="1" rgba="0.30 0.33 0.40 1"/>
+          size="{floor_half_len} 0.15 0.8" conaffinity="1" rgba="0 0 0 0"/>
+    <geom name="curb_left" type="box" pos="{mid_x} {half_width} 0.14"
+          size="{floor_half_len} 0.16 0.14" contype="0" conaffinity="0"
+          rgba="0.30 0.33 0.40 1"/>
+    <geom name="curb_right" type="box" pos="{mid_x} {-half_width} 0.14"
+          size="{floor_half_len} 0.16 0.14" contype="0" conaffinity="0"
+          rgba="0.30 0.33 0.40 1"/>
 
     <geom name="start_line" type="box" pos="0 0 0.011" size="0.1 {half_width} 0.01"
           contype="0" conaffinity="0" rgba="0.85 0.85 0.85 1"/>
@@ -93,8 +109,10 @@ def build_xml(finish_x: float = FINISH_X,
     </body>
 
     <body name="torso" pos="0 0 0.75">
-      <camera name="track" mode="trackcom" pos="-1.0 -5.0 2.2" xyaxes="1 0 0 0 0.42 0.91"/>
-      <camera name="side" mode="trackcom" pos="0 -7.0 1.6" xyaxes="1 0 0 0 0.2 0.98"/>
+      <camera name="track" mode="trackcom" pos="-0.5 -5.0 1.4"
+              xyaxes="0.9950 -0.0995 0 0.0267 0.2671 0.9633"/>
+      <camera name="side" mode="trackcom" pos="0 -8.0 3.0"
+              xyaxes="1 0 0 0 0.3511 0.9363"/>
       <geom name="torso_geom" type="sphere" size="0.25" rgba="0.90 0.35 0.30 1"/>
       <joint armature="0" damping="0" limited="false" margin="0.01" name="root"
              pos="0 0 0" type="free"/>{legs}
