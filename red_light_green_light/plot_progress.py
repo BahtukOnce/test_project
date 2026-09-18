@@ -65,7 +65,6 @@ def load_stages(dirs: list[Path]):
         if steps is None:
             raise SystemExit(f"в {path} нет колонки time/total_timesteps")
         data["_x"] = steps + offset
-        data["_name"] = (path.parent.parent.name or "stage")
         offset = float(np.nanmax(data["_x"]))
         stages.append(data)
     return stages

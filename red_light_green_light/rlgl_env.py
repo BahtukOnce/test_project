@@ -7,8 +7,12 @@
 Устройство награды (подробности в README):
   зелёный : + скорость вдоль коридора
   красный : + за неподвижность, вылет из эпизода за движение выше порога
-  всегда  : + бонус за "живость", - штраф за усилия на моторах
+  всегда  : + бонус за "живость", - штраф за время и за усилия на моторах
   финиш   : + крупный бонус
+
+Штраф за время принципиален: без него "простоять весь эпизод не двигаясь"
+приносит больше награды, чем добежать до финиша, и агент залипает в этой
+стратегии навсегда.
 """
 from __future__ import annotations
 
@@ -45,9 +49,10 @@ class RedLightGreenLightEnv(gym.Env):
 
     # --- веса награды ----------------------------------------------------
     W_FORWARD = 1.0
-    W_HEALTHY = 0.5
+    W_HEALTHY = 0.3
     W_CTRL = 0.5
-    W_STILL = 1.0
+    W_TIME = 0.3     # штраф за каждый шаг: иначе выгоднее простоять весь эпизод
+    W_STILL = 0.3
     W_BRAKE = 2.0
     R_FINISH = 200.0
     R_ELIMINATED = -100.0
@@ -157,7 +162,8 @@ class RedLightGreenLightEnv(gym.Env):
         forward_speed = (x - self.prev_x) / self.dt
         joint_motion = float(np.linalg.norm(self.data.qvel[6:]))
 
-        reward = self.W_HEALTHY - self.W_CTRL * float(np.sum(np.square(action)))
+        reward = (self.W_HEALTHY - self.W_TIME
+                  - self.W_CTRL * float(np.sum(np.square(action))))
         terminated = False
         info = {}
 
@@ -177,17 +183,20 @@ class RedLightGreenLightEnv(gym.Env):
                 stillness = 1.0 - speed_xy / thr
                 reward += self.W_STILL * stillness * (1.0 / (1.0 + 0.2 * joint_motion))
 
-        fell = not (self.HEALTHY_Z[0] < z < self.HEALTHY_Z[1])
-        if fell and not terminated:
-            reward += self.R_FELL
-            terminated = True
-            info["outcome"] = "fell"
-
+        # Порядок важен: движение на красный отменяет всё (агент выбыл),
+        # но пересечённый финиш побеждает падение — иначе прыжок через
+        # черту засчитывается как падение вместо победы.
         if x >= self.finish_x and not terminated:
             reward += self.R_FINISH
             terminated = True
             self.finished = True
             info["outcome"] = "finished"
+
+        fell = not (self.HEALTHY_Z[0] < z < self.HEALTHY_Z[1])
+        if fell and not terminated:
+            reward += self.R_FELL
+            terminated = True
+            info["outcome"] = "fell"
 
         truncated = (not terminated) and self.step_count >= self.max_steps
         if truncated:
