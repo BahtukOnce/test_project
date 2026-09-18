@@ -129,10 +129,14 @@ def draw_hud(frame: np.ndarray, env: RedLightGreenLightEnv, fonts, labels,
 
 
 def resolve_paths(model_arg: str):
+    """Из папки этапа берём лучшую модель, если она есть, иначе последнюю."""
     p = Path(model_arg)
-    if p.is_dir():
-        return p / "final.zip", p / "vecnormalize.pkl"
-    return p, p.parent / "vecnormalize.pkl"
+    if not p.is_dir():
+        return p, p.parent / "vecnormalize.pkl"
+    if (p / "best_model.zip").exists():
+        vn = p / "vecnormalize_best.pkl"
+        return p / "best_model.zip", vn if vn.exists() else p / "vecnormalize.pkl"
+    return p / "final.zip", p / "vecnormalize.pkl"
 
 
 def main():

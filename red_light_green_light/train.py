@@ -19,7 +19,8 @@ os.environ.setdefault("MUJOCO_GL", "osmesa")
 
 import numpy as np
 from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import BaseCallback, CheckpointCallback
+from stable_baselines3.common.callbacks import (BaseCallback, CheckpointCallback,
+                                                EvalCallback)
 from stable_baselines3.common.logger import configure
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import (DummyVecEnv, SubprocVecEnv,
@@ -60,6 +61,24 @@ class DifficultyCurriculum(BaseCallback):
         self.logger.record("curriculum/difficulty", self.current)
 
 
+class SaveNormalizerOnBest(BaseCallback):
+    """Кладёт статистику нормализации рядом с лучшей моделью.
+
+    EvalCallback сохраняет только веса, а без совпадающей статистики
+    нормализации наблюдений модель на инференсе работает заметно хуже.
+    """
+
+    def __init__(self, eval_env, save_path: Path, verbose: int = 0):
+        super().__init__(verbose)
+        self.eval_env = eval_env
+        self.save_path = save_path
+
+    def _on_step(self) -> bool:
+        if isinstance(self.eval_env, VecNormalize):
+            self.eval_env.save(str(self.save_path / "vecnormalize_best.pkl"))
+        return True
+
+
 class OutcomeLogger(BaseCallback):
     """Считает, чем кончаются эпизоды: финиш / вылет / падение / таймаут."""
 
@@ -93,6 +112,25 @@ class OutcomeLogger(BaseCallback):
 # --------------------------------------------------------------------------- #
 # Сборка окружения
 # --------------------------------------------------------------------------- #
+def make_lr(initial: float, schedule: str):
+    """Постоянный или линейно затухающий learning rate.
+
+    Затухание заметно снижает шанс развалить уже найденную политику
+    на поздних шагах обучения.
+    """
+    if schedule == "constant":
+        return initial
+    return lambda progress_remaining: progress_remaining * initial
+
+
+def resolve_stage_files(d: Path) -> tuple[Path, Path]:
+    """Берём лучшую модель этапа, если она есть, иначе последнюю."""
+    if (d / "best_model.zip").exists():
+        vn = d / "vecnormalize_best.pkl"
+        return d / "best_model.zip", vn if vn.exists() else d / "vecnormalize.pkl"
+    return d / "final.zip", d / "vecnormalize.pkl"
+
+
 def make_vec_env(n_envs: int, lights: bool, difficulty: float, seed: int,
                  episode_seconds: float):
     def factory(rank: int):
@@ -125,7 +163,14 @@ def main():
     p.add_argument("--curriculum-frac", type=float, default=0.6,
                    help="за какую долю обучения доходим до полной сложности")
     p.add_argument("--checkpoint-every", type=int, default=250_000)
+    p.add_argument("--eval-every", type=int, default=100_000,
+                   help="как часто честно оценивать модель и обновлять рекорд")
+    p.add_argument("--eval-episodes", type=int, default=12)
     p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument("--lr-schedule", choices=("linear", "constant"), default="linear",
+                   help="linear — затухание к нулю, устойчивее на длинных прогонах")
+    p.add_argument("--target-kl", type=float, default=0.02,
+                   help="обрывать обновление, если политика уходит слишком далеко")
     p.add_argument("--tensorboard", action="store_true",
                    help="писать логи ещё и в tensorboard (нужен пакет tensorboard)")
     args = p.parse_args()
@@ -141,7 +186,8 @@ def main():
 
     venv = make_vec_env(args.n_envs, lights, start_diff, args.seed, args.episode_seconds)
 
-    vecnorm_path = Path(args.init) / "vecnormalize.pkl" if args.init else None
+    init_model_path, vecnorm_path = (resolve_stage_files(Path(args.init))
+                                     if args.init else (None, None))
     if vecnorm_path and vecnorm_path.exists():
         venv = VecNormalize.load(str(vecnorm_path), venv)
         venv.training = True
@@ -164,24 +210,39 @@ def main():
     policy_kwargs = dict(net_arch=dict(pi=[256, 256], vf=[256, 256]))
 
     if args.init:
-        model_path = Path(args.init) / "final.zip"
-        if not model_path.exists():
-            raise SystemExit(f"не нашёл модель предыдущего этапа: {model_path}")
-        model = PPO.load(str(model_path), env=venv, device="cpu",
+        if not init_model_path.exists():
+            raise SystemExit(f"не нашёл модель предыдущего этапа: {init_model_path}")
+        model = PPO.load(str(init_model_path), env=venv, device="cpu",
                          tensorboard_log=tb_dir)
-        model.learning_rate = args.lr
+        model.learning_rate = make_lr(args.lr, args.lr_schedule)
+        model.target_kl = args.target_kl
         model._setup_lr_schedule()
-        print(f"  веса подхвачены из {model_path}")
+        print(f"  веса подхвачены из {init_model_path}")
     else:
         model = PPO("MlpPolicy", venv, verbose=1, seed=args.seed, device="cpu",
                     n_steps=n_steps, batch_size=256, n_epochs=10,
-                    learning_rate=args.lr, gamma=0.99, gae_lambda=0.95,
+                    learning_rate=make_lr(args.lr, args.lr_schedule),
+                    target_kl=args.target_kl, gamma=0.99, gae_lambda=0.95,
                     clip_range=0.2, ent_coef=0.0, vf_coef=0.5, max_grad_norm=0.5,
                     policy_kwargs=policy_kwargs, tensorboard_log=tb_dir)
 
     model.set_logger(configure(str(out / "logs"), log_formats))
 
-    callbacks = [OutcomeLogger()]
+    # Оценочная среда всегда на финальной сложности: иначе рекорд,
+    # поставленный на лёгких правилах, не побить никогда.
+    eval_env = make_vec_env(1, lights, args.difficulty_end, args.seed + 9000,
+                            args.episode_seconds)
+    eval_env = VecNormalize(eval_env, training=False, norm_reward=False, clip_obs=10.0)
+
+    callbacks = [OutcomeLogger(),
+                 EvalCallback(eval_env,
+                              best_model_save_path=str(out),
+                              log_path=str(out / "eval"),
+                              eval_freq=max(1, args.eval_every // args.n_envs),
+                              n_eval_episodes=args.eval_episodes,
+                              deterministic=True, render=False,
+                              callback_on_new_best=SaveNormalizerOnBest(eval_env, out),
+                              verbose=1)]
     if lights:
         callbacks.append(DifficultyCurriculum(args.difficulty_start, args.difficulty_end,
                                               args.curriculum_frac, args.steps))
@@ -199,7 +260,10 @@ def main():
     model.save(str(out / "final.zip"))
     venv.save(str(out / "vecnormalize.pkl"))
     venv.close()
-    print(f"[{args.stage}] готово -> {out/'final.zip'}")
+    eval_env.close()
+    best = out / "best_model.zip"
+    print(f"[{args.stage}] готово -> "
+          f"{best if best.exists() else out / 'final.zip'}")
 
 
 if __name__ == "__main__":
