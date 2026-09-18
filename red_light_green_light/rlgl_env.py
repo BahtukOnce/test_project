@@ -49,16 +49,18 @@ class RedLightGreenLightEnv(gym.Env):
 
     # --- веса награды ----------------------------------------------------
     W_FORWARD = 1.0
-    W_HEALTHY = 0.3
-    W_CTRL = 0.5
+    W_HEALTHY = 0.6
+    W_CTRL = 0.1
     W_TIME = 0.3     # штраф за каждый шаг: иначе выгоднее простоять весь эпизод
     W_STILL = 0.3
     W_BRAKE = 2.0
-    R_FINISH = 200.0
+    MAX_FORWARD_SPEED = 4.0   # не поощряем баллистические выбросы скорости
+    R_FINISH = 300.0
     R_ELIMINATED = -100.0
     R_FELL = -20.0
 
-    HEALTHY_Z = (0.26, 1.0)
+    HEALTHY_Z = (0.26, 1.35)   # низ — лёг на брюхо, верх — улетел кувырком
+    MIN_UPRIGHT = 0.0          # косинус наклона: ниже нуля — корпус вверх ногами
     FRAME_SKIP = 5              # 0.01 c * 5 = 20 Гц управления
 
     def __init__(self,
@@ -81,6 +83,7 @@ class RedLightGreenLightEnv(gym.Env):
         self.max_steps = int(episode_seconds / self.dt)
 
         self._light_gid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "light")
+        self._torso_bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "torso")
         self._init_qpos = self.model.key_qpos[0].copy() if self.model.nkey else None
 
         self.action_space = spaces.Box(-1.0, 1.0, shape=(self.model.nu,), dtype=np.float32)
@@ -159,7 +162,8 @@ class RedLightGreenLightEnv(gym.Env):
         x = float(self.data.qpos[0])
         z = float(self.data.qpos[2])
         speed_xy = float(np.linalg.norm(self.data.qvel[:2]))
-        forward_speed = (x - self.prev_x) / self.dt
+        forward_speed = float(np.clip((x - self.prev_x) / self.dt,
+                                      -self.MAX_FORWARD_SPEED, self.MAX_FORWARD_SPEED))
         joint_motion = float(np.linalg.norm(self.data.qvel[6:]))
 
         reward = (self.W_HEALTHY - self.W_TIME
@@ -192,7 +196,9 @@ class RedLightGreenLightEnv(gym.Env):
             self.finished = True
             info["outcome"] = "finished"
 
-        fell = not (self.HEALTHY_Z[0] < z < self.HEALTHY_Z[1])
+        upright = float(self.data.xmat[self._torso_bid].reshape(3, 3)[2, 2])
+        fell = (not (self.HEALTHY_Z[0] < z < self.HEALTHY_Z[1])
+                or upright < self.MIN_UPRIGHT)
         if fell and not terminated:
             reward += self.R_FELL
             terminated = True
