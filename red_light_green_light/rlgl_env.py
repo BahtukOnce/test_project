@@ -64,7 +64,7 @@ class RedLightGreenLightEnv(gym.Env):
     FRAME_SKIP = 5              # 0.01 c * 5 = 20 Гц управления
 
     def __init__(self,
-                 lights: bool = True,
+                 lights: bool = True,   # соблюдать правила; светофор виден всегда
                  difficulty: float = 1.0,
                  episode_seconds: float = 45.0,
                  finish_x: float = FINISH_X,
@@ -73,6 +73,10 @@ class RedLightGreenLightEnv(gym.Env):
                  camera: str = "track",
                  seed: int | None = None):
         super().__init__()
+        # Светофор работает ВСЕГДА, даже на этапе ходьбы. Иначе относящиеся
+        # к нему наблюдения были бы константами, их дисперсия ушла бы в ноль,
+        # и нормализация превратила бы сигнал в обрубленную ступеньку.
+        self.enforce = lights
         self.lights = lights
         self.difficulty = float(np.clip(difficulty, 0.0, 1.0))
         self.finish_x = finish_x
@@ -137,8 +141,12 @@ class RedLightGreenLightEnv(gym.Env):
 
         self.step_count = 0
         self.t = 0.0
+        # На этапе ходьбы сложность разная от эпизода к эпизоду: так все
+        # признаки, зависящие от curriculum, тоже меняются, а не стоят колом.
+        if not self.enforce:
+            self.difficulty = float(self.np_random.uniform(0.0, 1.0))
         self.light = GREEN
-        self.phase_ends_at = self._sample_phase_length(GREEN) if self.lights else 1e9
+        self.phase_ends_at = self._sample_phase_length(GREEN)
         self.grace_until = 0.0
         self.prev_x = float(self.data.qpos[0])
         self.prev_speed = 0.0
@@ -155,7 +163,9 @@ class RedLightGreenLightEnv(gym.Env):
         self.step_count += 1
         self.t += self.dt
 
-        was_green = self.light == GREEN
+        # Пока правила не соблюдаем, каждый шаг считается "зелёным":
+        # агент бежит сквозь красный, но светофор при этом видит.
+        was_green = (self.light == GREEN) or not self.enforce
         in_grace_before = self.t < self.grace_until
         self._advance_light()
 
@@ -221,8 +231,6 @@ class RedLightGreenLightEnv(gym.Env):
     # Внутреннее
     # ------------------------------------------------------------------ #
     def _advance_light(self):
-        if not self.lights:
-            return
         if self.t >= self.phase_ends_at:
             self.light = RED if self.light == GREEN else GREEN
             self.phase_ends_at = self.t + self._sample_phase_length(self.light)
