@@ -171,6 +171,12 @@ def main():
                    help="linear — затухание к нулю, устойчивее на длинных прогонах")
     p.add_argument("--target-kl", type=float, default=0.02,
                    help="обрывать обновление, если политика уходит слишком далеко")
+    p.add_argument("--ent-coef", type=float, default=None,
+                   help="вес энтропии; по умолчанию 0 для walk и 0.004 для game")
+    p.add_argument("--reset-std", type=float, default=0.35,
+                   help="вернуть разброс действий при старте с готовых весов "
+                        "(0 — не трогать). Без этого агент не нащупает "
+                        "принципиально новое поведение")
     p.add_argument("--tensorboard", action="store_true",
                    help="писать логи ещё и в tensorboard (нужен пакет tensorboard)")
     args = p.parse_args()
@@ -180,9 +186,14 @@ def main():
 
     lights = args.stage == "game"
     start_diff = args.difficulty_start if lights else 0.0
+    # На втором этапе нужна энтропия: агент приходит со сложившейся походкой
+    # и низким разбросом действий, а от него требуется поведение, которого
+    # в его репертуаре нет вообще.
+    ent_coef = args.ent_coef if args.ent_coef is not None else (0.004 if lights else 0.0)
 
     print(f"[{args.stage}] арен: {args.n_envs}, шагов: {args.steps:,}, "
-          f"светофор: {'да' if lights else 'нет'}")
+          f"правила светофора: {'соблюдаем' if lights else 'игнорируем'}, "
+          f"энтропия: {ent_coef}")
 
     venv = make_vec_env(args.n_envs, lights, start_diff, args.seed, args.episode_seconds)
 
@@ -216,14 +227,21 @@ def main():
                          tensorboard_log=tb_dir)
         model.learning_rate = make_lr(args.lr, args.lr_schedule)
         model.target_kl = args.target_kl
+        model.ent_coef = ent_coef
         model._setup_lr_schedule()
         print(f"  веса подхвачены из {init_model_path}")
+        if args.reset_std > 0 and hasattr(model.policy, "log_std"):
+            import torch
+            was = float(torch.exp(model.policy.log_std.data).mean())
+            with torch.no_grad():
+                model.policy.log_std.data.fill_(float(np.log(args.reset_std)))
+            print(f"  разброс действий восстановлен: {was:.3f} -> {args.reset_std:.3f}")
     else:
         model = PPO("MlpPolicy", venv, verbose=1, seed=args.seed, device="cpu",
                     n_steps=n_steps, batch_size=256, n_epochs=10,
                     learning_rate=make_lr(args.lr, args.lr_schedule),
                     target_kl=args.target_kl, gamma=0.99, gae_lambda=0.95,
-                    clip_range=0.2, ent_coef=0.0, vf_coef=0.5, max_grad_norm=0.5,
+                    clip_range=0.2, ent_coef=ent_coef, vf_coef=0.5, max_grad_norm=0.5,
                     policy_kwargs=policy_kwargs, tensorboard_log=tb_dir)
 
     model.set_logger(configure(str(out / "logs"), log_formats))

@@ -44,8 +44,8 @@ class RedLightGreenLightEnv(gym.Env):
     GREEN_MAX = (7.0, 3.5)
     RED_MIN = (1.0, 2.2)        # длительность красного, с
     RED_MAX = (1.8, 4.0)
-    GRACE = (1.10, 0.35)        # сколько секунд можно тормозить после красного
-    MOVE_THRESHOLD = (1.60, 0.30)  # м/с, выше — "ты пошевелился"
+    GRACE = (1.60, 0.35)        # сколько секунд можно тормозить после красного
+    MOVE_THRESHOLD = (2.60, 0.30)  # м/с, выше — "ты пошевелился"
 
     # --- веса награды ----------------------------------------------------
     W_FORWARD = 1.0
@@ -53,7 +53,7 @@ class RedLightGreenLightEnv(gym.Env):
     W_CTRL = 0.1
     W_TIME = 0.3     # штраф за каждый шаг: иначе выгоднее простоять весь эпизод
     W_STILL = 0.3
-    W_BRAKE = 2.0
+    W_BRAKE = 1.5
     MAX_FORWARD_SPEED = 4.0   # не поощряем баллистические выбросы скорости
     R_FINISH = 300.0
     R_ELIMINATED = -100.0
@@ -184,8 +184,10 @@ class RedLightGreenLightEnv(gym.Env):
         if was_green:
             reward += self.W_FORWARD * forward_speed
         elif in_grace_before:
-            # Кукла ещё разворачивается — награждаем за торможение.
-            reward += self.W_BRAKE * max(0.0, self.prev_speed - speed_xy)
+            # Кукла ещё разворачивается: вылета нет, но за медленность уже
+            # платим. Награда именно за низкую скорость, а не за её падение:
+            # разницу скоростей можно накручивать, разгоняясь и тормозя.
+            reward += self.W_BRAKE * max(0.0, 1.0 - speed_xy / self.move_threshold)
         else:
             thr = self.move_threshold
             if speed_xy > thr:
@@ -251,7 +253,7 @@ class RedLightGreenLightEnv(gym.Env):
             [float(self.light == GREEN)],                 # какой сейчас свет
             [time_to_switch],                             # скоро ли переключится
             [grace_left],                                 # сколько осталось тормозить
-            [self.move_threshold / 2.0],                  # насколько строгий судья
+            [self.move_threshold / self.MOVE_THRESHOLD[0]],  # строгость судьи
             [(self.finish_x - qpos[0]) / self.finish_x],  # сколько до финиша
         ]).astype(np.float64)
 
