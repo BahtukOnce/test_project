@@ -160,7 +160,7 @@ def main():
     p.add_argument("--episode-seconds", type=float, default=45.0)
     p.add_argument("--difficulty-start", type=float, default=0.0)
     p.add_argument("--difficulty-end", type=float, default=1.0)
-    p.add_argument("--curriculum-frac", type=float, default=0.6,
+    p.add_argument("--curriculum-frac", type=float, default=0.7,
                    help="за какую долю обучения доходим до полной сложности")
     p.add_argument("--checkpoint-every", type=int, default=250_000)
     p.add_argument("--eval-every", type=int, default=100_000,
