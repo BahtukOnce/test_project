@@ -21,6 +21,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import creature as creature_mod
 from rlgl_env import RedLightGreenLightEnv
 
 LABELS = {"finished": "дошёл до финиша", "eliminated": "вылетел на красный",
@@ -47,8 +48,12 @@ def main():
     ap.add_argument("--episodes", type=int, default=50)
     ap.add_argument("--no-lights", action="store_true")
     ap.add_argument("--difficulty", type=float, default=1.0)
+    ap.add_argument("--creature", default=None,
+                    help="файл существа; по умолчанию тот же, на котором училась модель")
     ap.add_argument("--seed", type=int, default=1000)
     ap.add_argument("--quiet", action="store_true", help="только итоговая строка")
+    ap.add_argument("--json", default=None,
+                    help="сохранить результат в файл для общей таблицы класса")
     args = ap.parse_args()
 
     model_path, vecnorm_path = resolve(args.model, args.vecnormalize)
@@ -56,12 +61,14 @@ def main():
         raise SystemExit(f"нет модели: {model_path}")
 
     lights = not args.no_lights
-    env = RedLightGreenLightEnv(lights=lights, difficulty=args.difficulty)
+    beast = creature_mod.load(args.creature) if args.creature else None
+    env = RedLightGreenLightEnv(lights=lights, difficulty=args.difficulty, creature=beast)
     model = PPO.load(str(model_path), device="cpu")
 
     normalizer = None
     if vecnorm_path.exists():
-        dummy = DummyVecEnv([lambda: RedLightGreenLightEnv(lights=lights)])
+        dummy = DummyVecEnv([lambda: RedLightGreenLightEnv(lights=lights,
+                                                           creature=beast)])
         normalizer = VecNormalize.load(str(vecnorm_path), dummy)
         normalizer.training = False
 
@@ -79,12 +86,30 @@ def main():
                 rewards.append(total)
                 distances.append(float(env.data.qpos[0]))
                 break
-    env.close()
-
     n = args.episodes
     finished = outcomes["finished"] / n
+
+    if args.json:
+        import json
+        Path(args.json).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.json).write_text(json.dumps({
+            "имя": env.creature.name,
+            "автор": env.creature.author,
+            "суставов": env.n_joints,
+            "ног": len(env.creature.legs),
+            "эпизодов": n,
+            "финишей": round(finished, 4),
+            "вылетов": round(outcomes["eliminated"] / n, 4),
+            "падений": round(outcomes["fell"] / n, 4),
+            "не_успел": round(outcomes["timeout"] / n, 4),
+            "средняя_дистанция": round(float(np.mean(distances)), 2),
+            "медианная_дистанция": round(float(np.median(distances)), 2),
+            "средняя_награда": round(float(np.mean(rewards)), 1),
+            "светофор": lights,
+        }, ensure_ascii=False, indent=2), encoding="utf-8")
     if args.quiet:
         print(f"{model_path}: финишей {finished:.0%}, награда {np.mean(rewards):7.1f}")
+        env.close()
         return
 
     print(f"\nмодель: {model_path}")
@@ -99,6 +124,7 @@ def main():
           f"медиана {np.median(rewards):7.1f}")
     print(f"дистанция: среднее {np.mean(distances):7.1f} м   "
           f"медиана {np.median(distances):7.1f} м")
+    env.close()
 
 
 if __name__ == "__main__":

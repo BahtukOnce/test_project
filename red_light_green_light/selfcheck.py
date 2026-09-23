@@ -33,22 +33,37 @@ def check(name: str):
     return wrap
 
 
-@check("1/6 Импорт зависимостей")
+@check("1/7 Импорт зависимостей")
 def _imports():
-    import mujoco, gymnasium, stable_baselines3, torch, imageio, PIL
+    import mujoco, gymnasium, stable_baselines3, torch, imageio, PIL, yaml
     return (f"mujoco {mujoco.__version__}, gymnasium {gymnasium.__version__}, "
             f"sb3 {stable_baselines3.__version__}, torch {torch.__version__}")
 
 
-@check("2/6 Сборка сцены MuJoCo")
+@check("2/7 Описания существ")
+def _creatures():
+    import creature as cr
+    from pathlib import Path
+    files = sorted(Path("creatures").glob("*.yaml"))
+    if not files:
+        raise RuntimeError("папка creatures пуста")
+    names = []
+    for f in files:
+        beast = cr.load(f)
+        names.append(f"{beast.name} ({beast.n_joints} суст.)")
+    return ", ".join(names)
+
+
+@check("3/7 Сборка сцены MuJoCo")
 def _model():
     import mujoco
+    import creature as cr
     from arena import build_xml
-    m = mujoco.MjModel.from_xml_string(build_xml())
+    m = mujoco.MjModel.from_xml_string(build_xml(cr.load("creatures/муравей.yaml")))
     return f"{m.nq} координат, {m.nu} моторов"
 
 
-@check("3/6 API среды (gymnasium)")
+@check("4/7 API среды (gymnasium)")
 def _env_api():
     from gymnasium.utils.env_checker import check_env
     from rlgl_env import RedLightGreenLightEnv
@@ -61,7 +76,7 @@ def _env_api():
     return f"наблюдение {env.observation_space.shape}, действие {env.action_space.shape}"
 
 
-@check("4/6 Рендер без монитора")
+@check("5/7 Рендер без монитора")
 def _render():
     from rlgl_env import RedLightGreenLightEnv
     env = RedLightGreenLightEnv(render_width=320, render_height=240)
@@ -73,7 +88,7 @@ def _render():
     return f"кадр {frame.shape}, MUJOCO_GL={os.environ.get('MUJOCO_GL')}"
 
 
-@check("5/6 Кодирование видео")
+@check("6/7 Кодирование видео")
 def _video():
     import numpy as np
     import imageio.v2 as imageio
@@ -93,7 +108,7 @@ def _video():
     return f"{size // 1024} КБ на 10 кадров"
 
 
-@check("6/6 Короткий цикл обучения")
+@check("7/7 Короткий цикл обучения")
 def _train():
     from stable_baselines3 import PPO
     from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize

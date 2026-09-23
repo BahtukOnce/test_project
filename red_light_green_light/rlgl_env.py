@@ -16,12 +16,17 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 import mujoco
 
+import creature as creature_mod
 from arena import build_xml, FINISH_X
+
+DEFAULT_CREATURE = "creatures/муравей.yaml"
 
 GREEN, RED = 1, 0
 
@@ -59,7 +64,10 @@ class RedLightGreenLightEnv(gym.Env):
     R_ELIMINATED = -100.0
     R_FELL = -20.0
 
-    HEALTHY_Z = (0.26, 1.35)   # низ — лёг на брюхо, верх — улетел кувырком
+    # Границы "здоровья" считаются от роста существа: у мелкого создания
+    # порог падения должен быть мелким, иначе оно "падает" уже на старте.
+    HEALTHY_LOW = 0.35         # доля роста: ниже — лёг на брюхо
+    HEALTHY_HIGH = 1.8         # доля роста: выше — улетел кувырком
     MIN_UPRIGHT = 0.0          # косинус наклона: ниже нуля — корпус вверх ногами
     FRAME_SKIP = 5              # 0.01 c * 5 = 20 Гц управления
 
@@ -71,8 +79,15 @@ class RedLightGreenLightEnv(gym.Env):
                  render_width: int = 640,
                  render_height: int = 480,
                  camera: str = "track",
+                 creature=None,
                  seed: int | None = None):
         super().__init__()
+        # Тело приходит из описания, которое правит ученик.
+        if creature is None:
+            creature = Path(__file__).resolve().parent / DEFAULT_CREATURE
+        if not isinstance(creature, creature_mod.Creature):
+            creature = creature_mod.load(creature)
+        self.creature = creature
         # Светофор работает ВСЕГДА, даже на этапе ходьбы. Иначе относящиеся
         # к нему наблюдения были бы константами, их дисперсия ушла бы в ноль,
         # и нормализация превратила бы сигнал в обрубленную ступеньку.
@@ -81,17 +96,37 @@ class RedLightGreenLightEnv(gym.Env):
         self.difficulty = float(np.clip(difficulty, 0.0, 1.0))
         self.finish_x = finish_x
 
-        self.model = mujoco.MjModel.from_xml_string(build_xml(finish_x=finish_x))
+        self.model = mujoco.MjModel.from_xml_string(
+            build_xml(creature, finish_x=finish_x))
         self.data = mujoco.MjData(self.model)
         self.dt = self.model.opt.timestep * self.FRAME_SKIP
         self.max_steps = int(episode_seconds / self.dt)
 
         self._light_gid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "light")
         self._torso_bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, "torso")
+        # Стартовая поза — нули по всем суставам. Если диапазон сустава не
+        # включает ноль, физика за пару шагов доводит его до ближайшего края;
+        # выглядит грубовато, зато одинаково для всех существ.
+        #
+        # Менять это нельзя безнаказанно: обученная политика крайне
+        # чувствительна к стартовому состоянию. Проверка показала, что
+        # смена старта с нуля на середину диапазона роняет уже обученную
+        # модель с 82% финишей до нуля.
+        self._rest_pose = np.zeros(self.model.nq - 7)
         self._init_qpos = self.model.key_qpos[0].copy() if self.model.nkey else None
 
+        # Число суставов у каждого существа своё, поэтому размер наблюдения
+        # считается, а не задаётся константой:
+        #   высота(1) + кватернион(4) + скорости корпуса(6) + светофор(5)
+        #   + углы суставов(n) + скорости суставов(n)
+        self.n_joints = self.model.nq - 7
+        self.height0 = float(self.creature.height)
+        self.HEALTHY_Z = (self.HEALTHY_LOW * self.height0,
+                          self.HEALTHY_HIGH * self.height0)
         self.action_space = spaces.Box(-1.0, 1.0, shape=(self.model.nu,), dtype=np.float32)
-        self.observation_space = spaces.Box(-np.inf, np.inf, shape=(32,), dtype=np.float64)
+        self.observation_space = spaces.Box(-np.inf, np.inf,
+                                            shape=(16 + 2 * self.n_joints,),
+                                            dtype=np.float64)
 
         self._renderer = None
         self._render_wh = (render_width, render_height)
@@ -132,9 +167,10 @@ class RedLightGreenLightEnv(gym.Env):
         mujoco.mj_resetData(self.model, self.data)
 
         qpos = self.data.qpos.copy()
-        qpos[:3] = [0.0, 0.0, 0.75]
+        qpos[:3] = [0.0, 0.0, self.height0]
         qpos[3:7] = [1.0, 0.0, 0.0, 0.0]
-        qpos[7:] += self.np_random.uniform(-0.1, 0.1, size=self.model.nq - 7)
+        qpos[7:] = (self._rest_pose
+                    + self.np_random.uniform(-0.1, 0.1, size=self.n_joints))
         self.data.qpos[:] = qpos
         self.data.qvel[:] = self.np_random.normal(scale=0.1, size=self.model.nv)
         mujoco.mj_forward(self.model, self.data)

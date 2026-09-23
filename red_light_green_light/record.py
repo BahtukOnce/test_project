@@ -22,6 +22,7 @@ from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import creature as creature_mod
 from rlgl_env import RedLightGreenLightEnv, GREEN
 
 _FONT_CANDIDATES = [
@@ -151,6 +152,8 @@ def main():
     ap.add_argument("--camera", default="track", choices=("track", "side"))
     ap.add_argument("--difficulty", type=float, default=1.0)
     ap.add_argument("--no-lights", action="store_true", help="снять забег без светофора")
+    ap.add_argument("--creature", default=None,
+                    help="файл существа; по умолчанию тот же, на котором училась модель")
     ap.add_argument("--seed", type=int, default=100)
     ap.add_argument("--stochastic", action="store_true",
                     help="не усреднять действия — видно разброс поведения")
@@ -169,14 +172,16 @@ def main():
             print(f"{name}: {value} -> {value - 1} (H.264 требует чётный размер)")
 
     lights = not args.no_lights
+    beast = creature_mod.load(args.creature) if args.creature else None
     env = RedLightGreenLightEnv(lights=lights, difficulty=args.difficulty,
                                 render_width=args.width, render_height=args.height,
-                                camera=args.camera)
+                                camera=args.camera, creature=beast)
     model = PPO.load(str(model_path), device="cpu")
 
     normalizer = None
     if vecnorm_path.exists():
-        dummy = DummyVecEnv([lambda: RedLightGreenLightEnv(lights=lights)])
+        dummy = DummyVecEnv([lambda: RedLightGreenLightEnv(lights=lights,
+                                                           creature=beast)])
         normalizer = VecNormalize.load(str(vecnorm_path), dummy)
         normalizer.training = False
         normalizer.norm_reward = False

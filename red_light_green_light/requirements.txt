@@ -13,5 +13,8 @@ imageio>=2.34
 imageio-ffmpeg>=0.4.9
 pillow>=10.0
 
+# Описания существ
+pyyaml>=6.0
+
 # Графики обучения
 matplotlib>=3.8

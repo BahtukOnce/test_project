@@ -1,7 +1,8 @@
-"""Сборка MuJoCo-сцены: коридор, финиш, кукла-ведущий и четвероногий агент.
+"""Сборка MuJoCo-сцены: коридор, финиш, кукла-ведущий и тело агента.
 
-Тело агента — классический "ant" (4 ноги, 8 моторов). Он не умеет ходить
-изначально: политика учится управлять суставами с нуля.
+Тело приходит из описания существа (creature.py) — того самого файла,
+который правит ученик. Ходить существо изначально не умеет: политика
+учится управлять его суставами с нуля.
 """
 
 FINISH_X = 25.0          # где находится финишная черта, метры
@@ -9,35 +10,14 @@ CORRIDOR_HALF_W = 3.0    # полуширина коридора
 DOLL_X = FINISH_X + 2.0  # кукла стоит за финишем
 
 
-def _leg(name: str, hip: str, ankle: str, dx: float, dy: float,
-         ankle_axis: str, ankle_range: str) -> str:
-    """Одна нога: бедро (поворот вокруг Z) + голень (сгиб)."""
-    return f"""
-      <body name="{name}" pos="0 0 0">
-        <geom fromto="0 0 0 {0.2 * dx} {0.2 * dy} 0" name="{name}_aux_geom" size="0.08" type="capsule"/>
-        <body name="{name}_aux" pos="{0.2 * dx} {0.2 * dy} 0">
-          <joint axis="0 0 1" name="{hip}" pos="0 0 0" range="-30 30" type="hinge"/>
-          <geom fromto="0 0 0 {0.2 * dx} {0.2 * dy} 0" name="{name}_upper_geom" size="0.08" type="capsule"/>
-          <body pos="{0.2 * dx} {0.2 * dy} 0">
-            <joint axis="{ankle_axis}" name="{ankle}" pos="0 0 0" range="{ankle_range}" type="hinge"/>
-            <geom fromto="0 0 0 {0.4 * dx} {0.4 * dy} 0" name="{name}_lower_geom" size="0.08" type="capsule"/>
-          </body>
-        </body>
-      </body>"""
-
-
-def build_xml(finish_x: float = FINISH_X,
+def build_xml(creature, finish_x: float = FINISH_X,
               half_width: float = CORRIDOR_HALF_W) -> str:
+    """Полная сцена: коридор с финишем плюс тело переданного существа."""
     doll_x = finish_x + 2.0
     mid_x = finish_x / 2.0
     floor_half_len = finish_x / 2.0 + 12.0
-
-    legs = (
-        _leg("leg_fl", "hip_1", "ankle_1", +1, +1, "-1 1 0", "30 70") +
-        _leg("leg_fr", "hip_2", "ankle_2", -1, +1, "1 1 0", "-70 -30") +
-        _leg("leg_bl", "hip_3", "ankle_3", -1, -1, "-1 1 0", "-70 -30") +
-        _leg("leg_br", "hip_4", "ankle_4", +1, -1, "1 1 0", "30 70")
-    )
+    body = creature.body_xml()
+    actuators = creature.actuators_xml()
 
     return f"""
 <mujoco model="red_light_green_light">
@@ -108,26 +88,11 @@ def build_xml(finish_x: float = FINISH_X,
             contype="0" conaffinity="0" rgba="0.12 0.12 0.14 1"/>
     </body>
 
-    <body name="torso" pos="0 0 0.75">
-      <camera name="track" mode="trackcom" pos="-0.5 -5.0 1.4"
-              xyaxes="0.9950 -0.0995 0 0.0267 0.2671 0.9633"/>
-      <camera name="side" mode="trackcom" pos="0 -8.0 3.0"
-              xyaxes="1 0 0 0 0.3511 0.9363"/>
-      <geom name="torso_geom" type="sphere" size="0.25" rgba="0.90 0.35 0.30 1"/>
-      <joint armature="0" damping="0" limited="false" margin="0.01" name="root"
-             pos="0 0 0" type="free"/>{legs}
-    </body>
+{body}
   </worldbody>
 
   <actuator>
-    <motor joint="hip_1"/>
-    <motor joint="ankle_1"/>
-    <motor joint="hip_2"/>
-    <motor joint="ankle_2"/>
-    <motor joint="hip_3"/>
-    <motor joint="ankle_3"/>
-    <motor joint="hip_4"/>
-    <motor joint="ankle_4"/>
+{actuators}
   </actuator>
 </mujoco>
 """

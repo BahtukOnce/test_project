@@ -27,6 +27,7 @@ from stable_baselines3.common.vec_env import (DummyVecEnv, SubprocVecEnv,
                                               VecNormalize)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import creature as creature_mod
 from rlgl_env import RedLightGreenLightEnv
 
 
@@ -132,11 +133,12 @@ def resolve_stage_files(d: Path) -> tuple[Path, Path]:
 
 
 def make_vec_env(n_envs: int, lights: bool, difficulty: float, seed: int,
-                 episode_seconds: float):
+                 episode_seconds: float, creature=None):
     def factory(rank: int):
         def _init():
             env = RedLightGreenLightEnv(lights=lights, difficulty=difficulty,
-                                        episode_seconds=episode_seconds)
+                                        episode_seconds=episode_seconds,
+                                        creature=creature)
             env.reset(seed=seed + rank)
             return Monitor(env)
         return _init
@@ -157,6 +159,8 @@ def main():
     p.add_argument("--init", default=None,
                    help="папка предыдущего этапа: берём оттуда веса и статистику нормализации")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--creature", default=None,
+                   help="файл существа, например creatures/муравей.yaml")
     p.add_argument("--episode-seconds", type=float, default=45.0)
     p.add_argument("--difficulty-start", type=float, default=0.0)
     p.add_argument("--difficulty-end", type=float, default=1.0)
@@ -195,7 +199,13 @@ def main():
           f"правила светофора: {'соблюдаем' if lights else 'игнорируем'}, "
           f"энтропия: {ent_coef}")
 
-    venv = make_vec_env(args.n_envs, lights, start_diff, args.seed, args.episode_seconds)
+    beast = creature_mod.load(args.creature) if args.creature else None
+    if beast is not None:
+        print(f"  существо: {beast.name}"
+              + (f" ({beast.author})" if beast.author else "")
+              + f", суставов {beast.n_joints}")
+    venv = make_vec_env(args.n_envs, lights, start_diff, args.seed,
+                        args.episode_seconds, beast)
 
     init_model_path, vecnorm_path = (resolve_stage_files(Path(args.init))
                                      if args.init else (None, None))
@@ -249,7 +259,7 @@ def main():
     # Оценочная среда всегда на финальной сложности: иначе рекорд,
     # поставленный на лёгких правилах, не побить никогда.
     eval_env = make_vec_env(1, lights, args.difficulty_end, args.seed + 9000,
-                            args.episode_seconds)
+                            args.episode_seconds, beast)
     eval_env = VecNormalize(eval_env, training=False, norm_reward=False, clip_obs=10.0)
 
     callbacks = [OutcomeLogger(),
