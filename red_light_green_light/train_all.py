@@ -48,7 +48,9 @@ def process(path: Path, args, n_envs: int) -> dict:
         return {"файл": path.name, "статус": "ошибка в описании",
                 "сообщение": str(exc).splitlines()[0], "минут": 0.0}
 
-    out = Path(args.runs) / beast.slug
+    # Папку называем по имени файла, а не существа: два ученика запросто
+    # назовут своих «Пухликами», и результаты затрут друг друга.
+    out = Path(args.runs) / creature_mod.safe_name(path.stem)
     out.mkdir(parents=True, exist_ok=True)
     result_json = out / "итог.json"
 
@@ -81,6 +83,12 @@ def process(path: Path, args, n_envs: int) -> dict:
         run_step([PYTHON, "evaluate.py", "--model", str(model_dir),
                   "--creature", str(path), "--episodes", str(args.episodes),
                   "--json", str(result_json), *lights], log, "оценка")
+        if result_json.exists():        # помечаем, из какого файла результат
+            import json as _json
+            данные = _json.loads(result_json.read_text(encoding="utf-8"))
+            данные["файл"] = path.name
+            result_json.write_text(_json.dumps(данные, ensure_ascii=False, indent=2),
+                                   encoding="utf-8")
         run_step([PYTHON, "record.py", "--model", str(model_dir),
                   "--creature", str(path), "--out", str(out / "видео.mp4"),
                   "--episodes", "3", "--width", "720", "--height", "404",
@@ -115,6 +123,15 @@ def main():
     paths = [p for p in paths if p.suffix in (".yaml", ".yml")]
     if not paths:
         raise SystemExit("не нашёл ни одного файла существа")
+
+    папки = {}
+    for p in paths:
+        папки.setdefault(creature_mod.safe_name(p.stem), []).append(p.name)
+    столкновения = {k: v for k, v in папки.items() if len(v) > 1}
+    if столкновения:
+        for k, v in столкновения.items():
+            print(f"файлы {v} дают одну папку «{k}» — переименуйте их")
+        raise SystemExit("имена файлов должны различаться")
 
     cpu = os.cpu_count() or 4
     n_envs = max(1, cpu // max(1, args.jobs))

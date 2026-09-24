@@ -36,6 +36,14 @@ def collect(runs_dir: Path) -> list[dict]:
         rows.append(row)
     rows.sort(key=lambda r: (-r.get("медианная_дистанция", 0),
                              -r.get("финишей", 0)))
+    # Два ученика вполне могут назвать существо одинаково — в таблице
+    # такие строки различаем по автору, иначе непонятно, чьё какое.
+    счёт: dict[str, int] = {}
+    for r in rows:
+        счёт[r.get("имя", "?")] = счёт.get(r.get("имя", "?"), 0) + 1
+    for r in rows:
+        if счёт.get(r.get("имя", "?"), 0) > 1 and r.get("автор"):
+            r["имя"] = f"{r['имя']} ({r['автор'].split(',')[0]})"
     return rows
 
 

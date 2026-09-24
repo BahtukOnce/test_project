@@ -21,6 +21,12 @@ class CreatureError(Exception):
     """Ошибка в описании существа — текст показывается ученику как есть."""
 
 
+def safe_name(text: str, fallback: str = "существо") -> str:
+    """Безопасное имя для папки: «Пухлик 2.0!» -> «Пухлик_2_0»."""
+    cleaned = re.sub(r"[^\w\-]+", "_", str(text), flags=re.UNICODE).strip("_")
+    return cleaned or fallback
+
+
 # --------------------------------------------------------------------------- #
 # Словарь понятных названий
 # --------------------------------------------------------------------------- #
@@ -155,9 +161,7 @@ class Creature:
 
     @property
     def slug(self) -> str:
-        """Безопасное имя для папки: «Пухлик 2.0!» -> «Пухлик_2_0»."""
-        s = re.sub(r"[^\w\-]+", "_", self.name, flags=re.UNICODE).strip("_")
-        return s or "существо"
+        return safe_name(self.name)
 
     @property
     def rgba(self) -> str:
